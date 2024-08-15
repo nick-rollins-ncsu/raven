@@ -124,7 +124,7 @@ class Simulate(CodeInterfaceBase):
     sim3Input = sim3Input.replace(workingDir+os.sep,'').strip()
     perturbedVal = Kwargs['SampledVars']
     sim3Data = SpecificParser.DataParser(sim3DataInput)
-    perturb = SpecificParser.PerturbedPaser(perturbInput, workingDir, sim3Input, perturbedVal)
+    perturb = SpecificParser.PerturbedParser(perturbInput, workingDir, sim3Input, perturbedVal)
     perturb.generateSim3Input(sim3Data)
     return currentInputFiles
 

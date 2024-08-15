@@ -13,7 +13,7 @@
 # limitations under the License.
 """
 Created on June 04, 2022
-@author: khnguy22 NCSU
+@author: khnguy22 NCSU, luquj NCSU
 
 comments: Interface for SIMULATE3 loading pattern optimzation
 """
@@ -36,13 +36,17 @@ class SimulateData:
     # retrieve data
     self.data['axial_mesh'] = self.axialMeshExtractor()
     self.data['keff'] = self.coreKeffEOC()
-    self.data['FDeltaH'] = self.maxFDH()
+    self.data["MaxFDH"] = self.maxFDH()
     self.data["kinf"] = self.kinfEOC()
-    self.data["boron"] = self.boronEOC()
+    self.data["max_boron"] = self.boronEOC()
     self.data["cycle_length"] = self.EOCEFPD()
-    self.data["PinPowerPeaking"] = self.pinPeaking()
+    self.data["pin_peaking"] = self.pinPeaking()
     self.data["exposure"] = self.burnupEOC()
-    self.data["assembly_power"] = self.assemblyPeakingFactors()
+    self.data["neutron_leakage"] = self.neutron_leakage()
+    self.data["core_avg_burnup"] = self.core_avg_burnup()
+    # self.data["assembly_power"] = self.assemblyPeakingFactors()
+    # self.data["fuel_cost"] = self.fuel_cost()
+	
     # this is a dummy variable for demonstration with MOF
     # check if something has been found
     if all(v is None for v in self.data.values()):
@@ -81,6 +85,9 @@ class SimulateData:
       if "** Studsvik CMS Steady-State 3-D Reactor Simulator **" in line:
         searchingHeights = False
       if "Grid Location Information" in line:
+        searchingHeights = False
+        break
+      elif "Grid Type Information" in line:
         searchingHeights = False
         break
       if searchingHeights:
@@ -163,6 +170,10 @@ class SimulateData:
         else:
           radialPowerDictionary[depl] = {}
       if "**   H-     G-     F-     E-     D-     C-     B-     A-     **" in line:
+        searching_ = False
+      elif "**   A-" in line:
+        searching_ = False
+      elif "**   Y-" in line:
         searching_ = False
 
       if searching_:
@@ -259,6 +270,7 @@ class SimulateData:
     if not list_:
       return ValueError("No values returned. Check Simulate File executed correctly")
     else:
+      print(f"This is Fq={max(list_)}")
       outputDict = {'info_ids':['pin_peaking'], 'values': [max(list_)] }
 
     return outputDict
@@ -485,6 +497,125 @@ class SimulateData:
       outputDict = {'info_ids':['exposure'], 'values': [burnups[-1]] }
 
     return outputDict
+
+  def fuel_cost(self):
+    """
+      Extracts the fuel types used in the core map and calculates the fuel cost based on a front end approach. 
+      This function applies only to quarter core symmetries.
+      @ In, Non
+      @ Out, outputDict, dict, the dictionary containing the rea data (None if non found)
+                            {'info_ids': list(of ids of data),
+                            'values': list}
+    """
+    outputDict = None
+    # First, we need to parse the core map from the output file.
+    # NOTE: Given that a run is not needed to know the Loading Pattern, this function could be on the input side. 
+    FA_list = []
+    for line in self.lines:
+      if "'FUE.TYP'" in line:
+        p1 = line.index(",")
+        p2 = line.index("/")
+        search_space = line[p1:p2]
+        search_space = search_space.replace(",","")
+        temp = search_space.split()
+        for i in temp:
+          FA_list.append(float(i))
+    FA_types = list(set(FA_list))
+    quartcore_size = len(temp)
+
+    # We separate the core map depending on how many times their elements are counted in the symmetry:  
+    # FA_list_A counted once, as it is the center of the core.
+    # FA_list_B counted twice, as they are are the centerlines.
+    # FA_list_C counted four times, as they are are the rest of fuel assemblies.
+    FA_list_A = FA_list[0]
+    FA_list_B = FA_list[1:quartcore_size] + FA_list[quartcore_size:quartcore_size*(quartcore_size-1)+1:quartcore_size]
+    FA_list_C = []
+    for i in range(quartcore_size-1):
+      FA_list_C.append(FA_list[(i+1)*quartcore_size + 1: (i+2)*quartcore_size])
+    FA_list_C = [item for sublist in FA_list_C for item in sublist] # To flatten FA_list_C
+    # Now we proceed to count how many fuel types of each type are there in our core.
+    FA_count_A = [float(fa == FA_list_A) for fa in FA_types]
+    FA_count_B = [float(FA_list_B.count(fa)*2) for fa in FA_types]
+    FA_count_C = [float(FA_list_C.count(fa)*4) for fa in FA_types]
+    FA_count = [FA_count_A[j] + FA_count_B[j] + FA_count_C[j] for j in range(len(FA_types))]
+    # And create a dictionary with all the fuel types count.
+    FA_types_dict = {int(FA_types[i]):FA_count[i] for i in range(len(FA_types))}
+    
+    # Dictionary with the unit cost for each FA type.
+
+    # FA type 0 = empty         -> M$ 0.0
+    # FA type 1 = reflector     -> M$ 0.0
+    # FA type 2 = 2.00 wt%      -> M$ 2.69520839
+    # FA type 3 = 2.50 wt%      -> M$ 3.24678409
+    # FA type 4 = 2.50 wt% + Gd -> M$ 3.24678409
+    # FA type 5 = 3.20 wt%      -> M$ 4.03739539
+    # FA type 6 = 3.20 wt% + Gd -> M$ 4.03739539
+    # The cost of burnable poison is not being considered.
+    
+    cost_dict = {
+      0: 0,
+      1: 0,
+      2: 2.69520839,
+      3: 3.24678409,
+      4: 3.24678409,
+      5: 4.03739539,
+      6: 4.03739539
+    }
+
+    fuel_cost = 0
+    for fuel_type, fuel_count in FA_types_dict.items():
+      fuel_cost += fuel_count * cost_dict[fuel_type]
+
+    if not fuel_cost:
+      return ValueError("No values returned. Check Simulate file executed correctly.")
+    else:
+      outputDict = {'info_ids':['fuel_cost'], 'values': [fuel_cost]}
+    return outputDict
+
+  def neutron_leakage(self):
+    """
+      Returns Maximum neutron leakage found in the current cycle.
+      @ In, None
+      @ Out, outputDict, dict, the dictionary containing the read data (None if none found)
+                        {'info_ids':list(of ids of data),
+                          'values': list}
+    """
+    outputDict = None
+    leakage_list = []
+    for line in self.lines:
+      if "Total Neutron Leakage" in line:
+        elems = line.strip().split()
+        leakage_list.append(float(elems[-1]))
+    if not leakage_list:
+      return ValueError("No values returned. Check Simulate File executed correctly")
+    else:
+      outputDict = {'info_ids':['neutron_leakage'], 'values':[10000*max(leakage_list)]}
+    return outputDict
+
+  def core_avg_burnup(self):
+    """
+      Returns the accumulated average core burnup at EOC.
+      @ In, None
+      @ Out, outputDict, dict, the dictionary containing the read data (None if none found)
+                        {'info_ids':list(of ids of data),
+                          'values': list}
+    """
+    list_ = []
+    outputDict = None
+    for line in self.lines:
+      if "Core Average Exposure" in line:
+        if "EBAR" in line:
+          elems = line.strip().split()
+          spot = elems.index("EBAR")
+          list_.append(float(elems[spot+1]))
+    print(list_)
+    print(list_[-1])
+    if not list_:
+      return ValueError("No values returned. Check Simulate file executed correctly.")
+    else:
+      outputDict = {'info_ids':['core_avg_exp'], 'values': [list_[-1]]}
+    return outputDict
+
 
   def writeCSV(self, fileout):
     """
