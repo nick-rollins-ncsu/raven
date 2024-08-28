@@ -1,6 +1,7 @@
 """
 Created on Aug. 10th, 2022
-@author: khnguy22
+Modified on Aug. 24th, 2024
+@author: khnguy22, nkrollin
 comment: Specific parser for Simulate3 interface
 """
 
@@ -201,7 +202,7 @@ def findType(faID,faDict):
     @ In, faDict, list, list of FA xml input attributes
     @ Out, faType, list, list of FA types
   """
-  faType = [id['type'] for id in faDict if id['FAid']==str(faID)][0] #!ERROR: which "type" should this be?
+  faType = [id['type'] for id in faDict if id['FAid']==str(faID)][0] #!which "type" should this be?
   return faType
 
 def getMap(parameter, locationList):
@@ -211,7 +212,7 @@ def getMap(parameter, locationList):
     @ In, locationList, list, Location list from PerturbedParser class
     @ Out, loadingPattern, str, Loading Pattern
   """
-  maxType = max([id['type'] for id in parameter.faDict])
+  maxType = max([id['type'] for id in parameter.faDict]) #!which "type" should this be?
   numberSpaces = len(str(maxType)) + 1
   problemMap = getCoreMap(parameter.mapSize, parameter.symmetry,
                            parameter.numberAssemblies, parameter.reflectorFlag)
